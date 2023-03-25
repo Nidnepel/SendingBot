@@ -5,13 +5,15 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"errors"
+
 	"github.com/Nidnepel/SendingBot/internal/bot_client"
 	"github.com/Nidnepel/SendingBot/internal/model"
 	"github.com/Nidnepel/SendingBot/internal/repository"
 )
 
 var (
-	ErrKeyExist = errors.New("key already exist")
+	ErrKeyExist    = errors.New("key already exist")
+	ErrKeyNotExist = errors.New("key not exist")
 )
 
 type UC struct {
@@ -37,7 +39,7 @@ func (u *UC) KeyGen(ctx context.Context, chat *model.Chat) (string, error) {
 		return "", err
 	}
 	if key != "" {
-		return "", ErrKeyExist
+		return key, ErrKeyExist
 	}
 
 	chat.Key = genKey()
@@ -63,32 +65,41 @@ func genKey() string {
 	return string(bytes)
 }
 
-func (u *UC) KeyIn(ctx context.Context, chat *model.Chat) error {
+func (u *UC) KeyIn(ctx context.Context, chat *model.Chat) (string, error) {
 	currentKey, err := u.repo.GetChatKey(ctx, chat)
 	if currentKey != "" {
-		return ErrKeyExist
+		return currentKey, ErrKeyExist
 	}
-	err = u.repo.SetKeyForChat(ctx, chat)
-	if err != nil {
-		return err
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
 	}
 
 	chats, err := u.repo.GetLinkedChats(ctx, chat.Key)
+	if err != nil || len(chats) == 0 {
+		return "", ErrKeyNotExist
+	}
+
+	err = u.repo.SetKeyForChat(ctx, chat)
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	chats, err = u.repo.GetLinkedChats(ctx, chat.Key)
+	if err != nil {
+		return "", err
 	}
 
 	for botName, bot := range u.bots {
 		for _, curchat := range chats {
 			if curchat.Messenger == botName {
 				bot.Send(model.Message{
-					Data:   "Успешное соединение!",
+					Data:   model.Data{Text: "Успешное соединение!"},
 					ChatTo: curchat,
 				})
 			}
 		}
 	}
-	return nil
+	return "", nil
 }
 
 func (u *UC) Send(ctx context.Context, mes *model.Message) error {
@@ -113,4 +124,8 @@ func (u *UC) Send(ctx context.Context, mes *model.Message) error {
 		}
 	}
 	return nil
+}
+
+func (u *UC) KeyDrop(ctx context.Context, chat *model.Chat) error {
+	return u.repo.ClearKeyForChat(ctx, chat)
 }
