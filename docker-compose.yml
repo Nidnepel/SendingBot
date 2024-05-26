@@ -1,11 +1,10 @@
+version: '3.8'
+
 services:
-  postgres:
-    image: postgres:13
-    environment:
-      POSTGRES_DB: test
-      POSTGRES_USER: test
-      POSTGRES_PASSWORD: test
+  bot:
+    build: .
     ports:
-      - "5432:5432"
+      - "8080:8080"
+
 volumes:
   data:

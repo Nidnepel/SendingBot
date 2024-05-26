@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"encoding/json"
 	"log"
 	"strings"
 
@@ -32,16 +34,36 @@ func New(uc usecase.Usecase, token string) bot_client.Bot {
 }
 
 func (tb *Bot) Run() {
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-
-	updates := tb.api.GetUpdatesChan(u)
-
-	for update := range updates {
-		if mes := update.Message; mes != nil { // If we got a message
-			tb.routeMessage(mes)
-		}
+	whURL := "https://fdvmk23f.ngrok.io/sending_bot"
+	wh, _ := tgbotapi.NewWebhookWithCert(whURL, nil)
+	_, err := tb.api.SetWebhook(wh)
+	if err != nil {
+		log.Fatalf("Failed to set webhook: %v", err)
 	}
+
+
+	info, err := tb.api.GetWebhookInfo()
+	if err != nil {
+		log.Fatalf("Failed to get webhook info: %s", err)
+	}
+
+	if info.LastErrorDate != 0 {
+		log.Printf("Telegram webhook failed, last error: %s", info.LastErrorMessage)
+	}
+
+	http.HandleFunc("/sending_bot", func(w http.ResponseWriter, r *http.Request) {
+		var update tgbotapi.Update
+		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if mes := update.Message; mes != nil { 
+			go tb.routeMessage(mes)
+		}
+	})
+
+	log.Fatal(http.ListenAndServe(":8444", nil)) 
 }
 
 func (tb *Bot) routeMessage(message *tgbotapi.Message) {

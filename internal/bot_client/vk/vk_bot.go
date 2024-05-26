@@ -4,54 +4,63 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
+	"encoding/json"
 	"strings"
 
 	"errors"
 
+	"github.com/SevereCloud/vksdk/v2/api"
+	"github.com/SevereCloud/vksdk/v2/events"
 	"github.com/SevereCloud/vksdk/v2/object"
+	"github.com/SevereCloud/vksdk/v2/callback"
 
 	"github.com/Nidnepel/SendingBot/internal/bot_client"
 	"github.com/Nidnepel/SendingBot/internal/model"
 	"github.com/Nidnepel/SendingBot/internal/usecase"
-	"github.com/SevereCloud/vksdk/v2/api"
-	"github.com/SevereCloud/vksdk/v2/events"
-	longpoll "github.com/SevereCloud/vksdk/v2/longpoll-bot"
 )
 
 type Bot struct {
 	api *api.VK
 	uc  usecase.Usecase
+	callbackSecret string
 }
 
-func New(uc usecase.Usecase, token string) bot_client.Bot {
+func New(uc usecase.Usecase, token string, callbackSecret string) bot_client.Bot {
 	bot := api.NewVK(token)
 
 	return &Bot{api: bot, uc: uc}
 }
 
 func (b *Bot) Run() {
-	// Получение информации о группе
-	group, err := b.api.GroupsGetByID(nil)
-	if err != nil {
-		log.Fatalf("Ошибка при получении информации о группе: %v", err)
-	}
-
-	// Создание объекта Long Poll
-	lp, err := longpoll.NewLongPoll(b.api, group[0].ID)
-	if err != nil {
-		log.Fatalf("Ошибка при создании Long Poll: %v", err)
-	}
-
-	// Обработчик новых сообщений
-	lp.MessageNew(b.routeMessage)
-
-	// Запуск Long Poll
-	log.Println("Запуск Long Poll сервера.")
-	go func() {
-		if err := lp.Run(); err != nil {
-			log.Fatalf("Ошибка Long Poll: %v", err)
+	http.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		var callbackEvent events.GroupEvent
+		if err := json.NewDecoder(r.Body).Decode(&callbackEvent); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
-	}()
+
+		if callbackEvent.Secret != b.callbackSecret {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		switch callbackEvent.Type {
+		case events.EventMessageNew:
+			var obj events.MessageNewObject
+			err := json.Unmarshal(callbackEvent.Object, &obj)
+			if err != nil {
+				log.Printf("Error unmarshaling MessageNew object: %v", err)
+				return
+			}
+			go b.routeMessage(context.Background(), obj) 
+			fmt.Fprint(w, "ok")
+		case events.EventConfirmation:
+			fmt.Fprint(w, "54kmlkBf7vf98Nfdvk4FKML43")
+		}
+	})
+
+	log.Fatal(http.ListenAndServe(":8443", nil)) 
 }
 
 func (b *Bot) routeMessage(ctx context.Context, obj events.MessageNewObject) {
